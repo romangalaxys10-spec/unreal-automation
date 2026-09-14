@@ -143,11 +143,11 @@ mat_mullion  = flat("M_Mullion", (0.05, 0.045, 0.04), 0.45, 0.6)
 mat_gold     = flat("M_Gold", (0.85, 0.60, 0.15), 0.22, 1.0)
 mat_leaf     = flat("M_Leaf", (0.08, 0.16, 0.05), 0.8)
 mat_ctx1     = flat("M_Ctx1", (0.05, 0.055, 0.07), 0.6)
-mat_win      = glow("M_Window", (1.0, 0.72, 0.40), 2.6)
-mat_lamp     = glow("M_Lamp", (1.0, 0.75, 0.45), 6.0)
-mat_car_r    = glow("M_CarR", (1.0, 0.12, 0.06), 4.0)
-mat_car_w    = glow("M_CarW", (1.0, 0.95, 0.85), 5.0)
-mat_atrium   = glow("M_Atrium", (1.0, 0.78, 0.50), 1.6)
+mat_win      = glow("M_Window", (1.0, 0.72, 0.40), 25.0)
+mat_lamp     = glow("M_Lamp", (1.0, 0.75, 0.45), 35.0)
+mat_car_r    = glow("M_CarR", (1.0, 0.12, 0.06), 15.0)
+mat_car_w    = glow("M_CarW", (1.0, 0.95, 0.85), 18.0)
+mat_atrium   = glow("M_Atrium", (1.0, 0.78, 0.50), 25.0)
 mat_water    = flat("M_Water", (0.55, 0.68, 0.85), 0.15)
 mat_stone    = flat("M_StoneEdge", (0.42, 0.38, 0.32), 0.7)
 mat_tifwin   = flat("M_TifWin", (0.25, 0.28, 0.30), 0.3, 0.4)
@@ -263,7 +263,7 @@ sun = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.DirectionalLight, 
 sun.set_actor_label("Sun")
 sun.set_actor_rotation(unreal.Rotator(28.0, 100.0, 0.0), False)
 sun_lc = sun.get_component_by_class(unreal.DirectionalLightComponent)
-sun_lc.set_intensity(3.0)
+sun_lc.set_intensity(30.0)   # UE lux scale: 30 ≈ bright golden-hour sun
 sun_lc.set_light_color(unreal.LinearColor(1.0, 0.55, 0.28, 1))
 
 atmo = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.SkyAtmosphere, unreal.Vector(0, 0, 0))
@@ -272,29 +272,46 @@ atmo.set_actor_label("Atmosphere")
 fog = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.ExponentialHeightFog, unreal.Vector(0, 0, 0))
 fog.set_actor_label("Fog")
 fc = fog.get_component_by_class(unreal.ExponentialHeightFogComponent)
-fc.set_fog_density(0.004)
+fc.set_fog_density(0.002)
 try:
-    fc.set_fog_inscat_luminance(unreal.LinearColor(0.10, 0.15, 0.38, 1))
+    fc.set_editor_property("fog_inscattering_luminance", unreal.LinearColor(0.18, 0.24, 0.50, 1))
 except Exception as e:
     log("fog luminance skip: " + str(e))
 
 skylight = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.SkyLight, unreal.Vector(0, 0, 300))
 skylight.set_actor_label("SkyLight")
 slc = skylight.get_component_by_class(unreal.SkyLightComponent)
-slc.set_intensity(0.6)
+slc.set_intensity(5.0)
 
 ppv = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.PostProcessVolume, unreal.Vector(0, 0, 0))
 ppv.set_actor_label("PP")
 ppv.set_editor_property("unbound", True)
-ppc = ppv.get_component_by_class(unreal.PostProcessComponent)
+# robust component lookup (get_component_by_class returned None on 5.8 for this actor)
+ppc = None
 try:
-    st = ppc.settings
-    st.auto_exposure_min_brightness = 1.0
-    st.auto_exposure_max_brightness = 2.0
-    st.exposure_compensation = 1.0
-    ppc.settings = st
+    comps = ppv.get_components_by_class(unreal.PostProcessComponent)
+    ppc = comps[0] if comps else None
 except Exception as e:
-    log("pp exposure skip: " + str(e))
+    log("component lookup skip: " + str(e))
+if ppc:
+    try:
+        st = ppc.get_editor_property("settings")
+        st.auto_exposure_min_brightness = 0.6
+        st.auto_exposure_max_brightness = 1.4
+        st.exposure_compensation = 2.5
+        ppc.set_editor_property("settings", st)
+    except Exception as e:
+        log("pp exposure skip: " + str(e))
+else:
+    log("ppv component not found — relying on auto-exposure")
+
+# entrance warm fill so the street-level beat reads
+fill_in = unreal.EditorLevelLibrary.spawn_actor_from_class(unreal.PointLight, unreal.Vector(-2600, 0, 500))
+fill_in.set_actor_label("EntranceFill")
+flc = fill_in.get_component_by_class(unreal.PointLightComponent)
+flc.set_intensity(80000.0)
+flc.set_light_color(unreal.LinearColor(1.0, 0.65, 0.35, 1))
+flc.set_attenuation_radius(6000.0)
 
 # ---------- camera + sequence ----------
 log("stage 9: sequence")
@@ -304,6 +321,10 @@ ccam = cam.get_component_by_class(unreal.CameraComponent)
 ccam.set_field_of_view(65.0)
 
 at2 = unreal.AssetToolsHelpers.get_asset_tools()
+# fresh sequence every build: stale possessable bindings (dead camera guids) from
+# previous builds confuse PIE camera resolution — avoid accumulating them
+if asset_exists("/Game/Seq/TowerSeq"):
+    unreal.EditorAssetLibrary.delete_asset("/Game/Seq/TowerSeq")
 seq = create_asset_safe("TowerSeq", "/Game/Seq", unreal.LevelSequence, unreal.LevelSequenceFactoryNew)
 seq = unreal.load_asset("/Game/Seq/TowerSeq")
 seq.set_display_rate(unreal.FrameRate(24, 1))
@@ -317,16 +338,16 @@ sec.set_start_frame(0)
 sec.set_end_frame(1248)
 
 KEYS = [
-    (0,    (-5200, 1400, 200),   (-1500, 0, 5500)),
-    (140,  (-6000, -1000, 3500), (-1500, 0, 8500)),
-    (280,  (-7000, -8500, 10000),(-500, 0, 12000)),
-    (420,  (-1800, -10800, 12500),(0, 0, 11500)),
-    (560,  (500, -4600, 9500),   (0, -1200, 10000)),
-    (700,  (6200, -3000, 13500), (1200, 0, 13500)),
-    (840,  (4200, 4400, 21800),  (-400, -400, 17800)),
-    (980,  (11500, 12200, 16500),(0, 0, 10500)),
-    (1120, (15000, 16000, 12500),(0, 0, 9200)),
-    (1248, (16500, 17500, 11500),(0, 0, 9000)),
+    (0,    (900, 600, 250),     (-2100, 0, 1800)),   # entrance + signage closeup
+    (140,  (-400, -3500, 800),  (0, 0, 3000)),       # low across plaza toward tower
+    (280,  (-2600, -1400, 4000),(0, 0, 9000)),       # west facade rising
+    (420,  (-1500, -6500, 8000),(0, 0, 11000)),      # south-west orbit
+    (560,  (0, -3800, 7000),    (0, 0, 8000)),       # close south flyby (sawtooth)
+    (700,  (3200, -1500, 9500), (0, 0, 10000)),      # south-east corner
+    (840,  (1800, 1800, 21000), (0, 0, 17000)),      # over the top
+    (980,  (6500, 7000, 15000), (0, 0, 10000)),      # north-east pull
+    (1120, (9500, 10000, 11000),(0, 0, 9000)),       # wide reveal
+    (1248, (11000, 12000, 10000),(0, 0, 8500)),      # settle
 ]
 try:
     chans = sec.get_all_channels()
